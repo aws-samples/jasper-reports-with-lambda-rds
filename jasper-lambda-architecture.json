@@ -1,0 +1,271 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    
+    "Description": "AWS CloudFormation template to create the architect of the JasperReports Lambda solution. It creates an API Gateway, an RDS MySql database, an IAM role with necessary permissions, a Sessions Manager secret and a Lambda function.",
+  
+    "Parameters": {
+        "UsuarioDB" : {
+            "Type" : "String",
+            "Description" : "Digite o usuario da conta master do banco de dados.",
+            "AllowedPattern": ".+"
+        },
+        "SenhaDB": {
+            "NoEcho" : "true",
+            "Type": "String",
+            "Description": "Digite a senha do usuario master do banco de dados. A senha deve ter entre 8 e 41 caracteres, e pode conter todos os caracteres ASCII imprimiveis com excecao de \"/\", \"\", or \"@\".",
+            "MinLength" : "8",
+            "MaxLength" : "41",
+            "AllowedPattern" : ".+"
+        }
+    },
+
+    "Resources": {
+
+        "JasperLambdaS3Bucket": {
+            "Type" : "AWS::S3::Bucket",
+            "Properties" : {},
+            "DeletionPolicy" : "Retain"
+        },
+
+        "JasperLambdaVPC": 
+        {
+            "Type" : "AWS::EC2::VPC",
+            "Properties" : {
+                "CidrBlock" : "173.0.0.0/24",
+                "Tags" : [ { "Key" : "Name", "Value" : "LambdaJasperVPC" } ]
+            }
+        },
+
+        "JasperLambdaPublicSubnet" : {
+            "Type" : "AWS::EC2::Subnet",
+            "Properties" : {
+                "AvailabilityZone": "us-east-1a",
+                "CidrBlock" : "173.0.0.0/25",
+                "VpcId" : { "Ref" : "JasperLambdaVPC" },
+                "Tags" : [ { "Key" : "Name", "Value" : "public-subnet" } ]
+            }
+         },     
+         
+         "JasperLambdaPrivateSubnet" : {
+            "Type" : "AWS::EC2::Subnet",
+            "Properties" : {
+                "AvailabilityZone": "us-east-1b",
+                "CidrBlock" : "173.0.0.128/25",
+                "VpcId" : { "Ref" : "JasperLambdaVPC" },
+                "Tags" : [ { "Key" : "Name", "Value" : "subnet-privada" } ]
+            }
+         },
+         
+         "PublicRouteTable" : {
+            "Type" : "AWS::EC2::RouteTable",
+            "Properties" : {
+               "VpcId" : { "Ref" : "JasperLambdaVPC" },
+               "Tags" : [ { "Key" : "Name", "Value" : "rt-publica" } ]
+            }
+         },
+
+         "PrivateRouteTable" : {
+            "Type" : "AWS::EC2::RouteTable",
+            "Properties" : {
+               "VpcId" : { "Ref" : "JasperLambdaVPC" },
+               "Tags" : [ { "Key" : "Name", "Value" : "rt-privada" } ]
+            }
+         },
+         
+         "JasperLambdaDBSubnetGroup" : {
+            "Type" : "AWS::RDS::DBSubnetGroup",
+            "Properties" : {
+                "DBSubnetGroupDescription" : "DB subnet group onde o banco de dados e disponibilizado.",
+                "DBSubnetGroupName" : "JasperLambdaDBSubnetGroup",
+                "SubnetIds" : [
+                     { "Ref" : "JasperLambdaPublicSubnet" },
+                    { "Ref" : "JasperLambdaPrivateSubnet" }
+                ]
+            }
+         },
+
+         "JasperLambdaInternetGateway" : {
+            "Type" : "AWS::EC2::InternetGateway",
+            "Properties" : {
+              "Tags" : [ {"Key" : "Name", "Value" : "JasperLambdaIGW"}]
+            }
+        },
+
+        "AttachGateway" : {
+            "Type" : "AWS::EC2::VPCGatewayAttachment",
+            "Properties" : {
+               "VpcId" : { "Ref" : "JasperLambdaVPC" },
+               "InternetGatewayId" : { "Ref" : "JasperLambdaInternetGateway" }
+             }
+         },
+
+         "EIP" : {
+            "DependsOn" : "AttachGateway",
+            "Type" : "AWS::EC2::EIP",
+            "Properties" : {
+               "Domain" : "vpc",
+               "Tags" : [ {"Key" : "Name", "Value" : "JasperLambdaEIP" } ]
+            }
+         },
+         
+         "JasperLambdaNATGateway" : {
+            "Type" : "AWS::EC2::NatGateway",
+            "Properties" : {
+               "AllocationId" : { "Fn::GetAtt" : ["EIP", "AllocationId"]},
+               "SubnetId" : { "Ref" : "JasperLambdaPublicSubnet"},
+               "Tags" : [ {"Key" : "Name", "Value" : "JasperLambdaNATGW" } ]
+              }
+         },
+
+         "PublicSubnetRouteTableAssociation" : {
+            "Type" : "AWS::EC2::SubnetRouteTableAssociation",
+            "Properties" : {
+               "SubnetId" : { "Ref" : "JasperLambdaPublicSubnet" },
+               "RouteTableId" : { "Ref" : "PublicRouteTable" }
+            }
+         },
+
+         "PrivateSubnetRouteTableAssociation" : {
+            "Type" : "AWS::EC2::SubnetRouteTableAssociation",
+            "Properties" : {
+               "SubnetId" : { "Ref" : "JasperLambdaPrivateSubnet" },
+               "RouteTableId" : { "Ref" : "PrivateRouteTable" }
+            }
+         },
+
+         "IGWRoute" : {
+            "Type" : "AWS::EC2::Route",
+            "Properties" : {
+               "RouteTableId" : { "Ref" : "PublicRouteTable" },
+               "DestinationCidrBlock" : "0.0.0.0/0",
+               "GatewayId" : { "Ref" : "JasperLambdaInternetGateway" }
+            }
+         },
+
+         "NATGWRoute" : {
+            "Type" : "AWS::EC2::Route",
+            "Properties" : {
+               "RouteTableId" : { "Ref" : "PrivateRouteTable" },
+               "DestinationCidrBlock" : "0.0.0.0/0",
+               "NatGatewayId" : { "Ref" : "JasperLambdaNATGateway" }
+            }
+         },
+
+        "JasperLambdaSecurityGroup": 
+        {
+            "Type" : "AWS::EC2::SecurityGroup",
+            "Properties" : {
+                "GroupDescription" : "Security Group criado para os recursos na solucao Jasper Reports com Lambda",
+                "GroupName" : "JasperLambdaSecurityGroup",
+                "SecurityGroupEgress" : [{
+                    "IpProtocol" : "-1",
+                    "FromPort" : -1,
+                    "ToPort" : -1,
+                    "CidrIp" : "0.0.0.0/0"
+                }],
+                "VpcId" : { "Ref": "JasperLambdaVPC" }
+            }
+        },
+
+        "InboundRule": {
+            "Type": "AWS::EC2::SecurityGroupIngress",
+            "Properties": {
+                "GroupId":  { "Ref": "JasperLambdaSecurityGroup" },
+                "IpProtocol": "-1",
+                "FromPort": "-1",
+                "ToPort": "-1",
+                "SourceSecurityGroupId":  { "Ref": "JasperLambdaSecurityGroup" }
+            }
+        },
+
+        "LambdaJasperIAMRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [{
+                    "Effect": "Allow",
+                    "Principal": { "Service": "lambda.amazonaws.com" },
+                    "Action": ["sts:AssumeRole"]
+                    }]
+                },
+                "ManagedPolicyArns": [
+                    "arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess",
+                    "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+                ],
+                "Policies": [
+                    {
+                        "PolicyName": "LambdaBasicExecutionRole",
+                        "PolicyDocument": {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "logs:*"
+                                    ],
+                                    "Resource": "arn:aws:logs:*:*:*"
+                                }
+                            ]
+                        }
+                    },
+                    { 
+                        "PolicyName": "LambdaSecretsAccessRole",
+                        "PolicyDocument":{
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Sid": "VisualEditor0",
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "secretsmanager:GetResourcePolicy",
+                                        "secretsmanager:GetSecretValue",
+                                        "secretsmanager:DescribeSecret",
+                                        "secretsmanager:ListSecretVersionIds"
+                                    ],
+                                    "Resource": "*"
+                                },
+                                {
+                                    "Sid": "VisualEditor1",
+                                    "Effect": "Allow",
+                                    "Action": "secretsmanager:GetRandomPassword",
+                                    "Resource": "*"
+                                }
+                            ]
+                        }                
+                    }   
+                ]
+            }
+        },
+
+        "RDSMysqlInstance": {
+            "Type" : "AWS::RDS::DBInstance",
+            "Properties" : {
+                "AllocatedStorage" : "20",
+                "BackupRetentionPeriod" : 0,
+                "DBInstanceClass" : "db.t2.micro",
+                "DBInstanceIdentifier" : "JasperReportsDB",
+                "DBName" : "ExampleDB",
+                "Engine" : "mysql",
+                "EngineVersion" : "8.0.20",
+                "MasterUsername" : { "Ref" : "UsuarioDB" },
+                "MasterUserPassword":  { "Ref" : "SenhaDB" },
+                "MultiAZ" : false,
+                "Port" : 3306,
+                "PubliclyAccessible" : false,
+                "DBSubnetGroupName": { "Ref": "JasperLambdaDBSubnetGroup" },
+                "VPCSecurityGroups" : [ { "Ref": "JasperLambdaSecurityGroup"}]
+            }
+        }
+
+    },
+
+    "Outputs": {
+        "JasperBucketName": {
+            "Value": { "Ref": "JasperLambdaS3Bucket" }
+        },
+        "IamRoleArn": {
+            "Value": { "Fn::GetAtt": ["LambdaJasperIAMRole", "Arn"] }
+        }
+    }
+  }
