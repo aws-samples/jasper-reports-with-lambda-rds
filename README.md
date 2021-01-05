@@ -1,11 +1,11 @@
-## My Project
+## Jasper Reports with Lambda, RDS and API Gateway
 
-TODO: Fill this README out!
+This repository hosts the code for a Java Lambda Function that generates JasperReports reports in PDF format, using data queried from an RDS MySQL database.
+The Lambda function is meant to be invoked through a REST API created by in API Gateway. This code and repository is part of an AWS Blog Post. You can find an example
+of usage of this code in the Blog Post.
 
-Be sure to:
-
-* Change the title in this README
-* Edit your repository description on GitHub
+Along with the function code, this project contains a template file for the JasperReports created in the Blog Post, "template.jrxml", and a CloudFormation script
+responsible for launching the required resources, "jasper-lambda-architecture.json". Both files are located in the root of the repository.
 
 ## Security
 
